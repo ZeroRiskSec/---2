@@ -6,19 +6,48 @@ from datetime import datetime
 
 class NumberGuessingGame:
     def __init__(self):
-        self.stats_file = "game_stats.json"
-        self.save_file = "game_save.json"
+        # Используем домашнюю директорию для файлов
+        home_dir = os.path.expanduser("~")
+        self.stats_file = os.path.join(home_dir, "number_guess_game_stats.json")
+        self.save_file = os.path.join(home_dir, "number_guess_game_save.json")
         self.stats = self.load_stats()
         self.current_game = None
         
+    def get_safe_file_path(self, filename):
+        """Получает безопасный путь для файла"""
+        # Пробуем несколько мест для сохранения
+        possible_paths = [
+            os.path.expanduser("~"),  # Домашняя директория
+            os.getcwd(),  # Текущая рабочая директория
+            os.path.join(os.path.expanduser("~"), "Documents"),  # Документы
+        ]
+        
+        for path in possible_paths:
+            file_path = os.path.join(path, filename)
+            try:
+                # Проверяем, можем ли мы писать в эту директорию
+                test_file = os.path.join(path, "test_write.tmp")
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                return file_path
+            except (IOError, OSError):
+                continue
+        
+        # Если ни одна директория не подошла, используем текущую
+        return filename
+    
     def load_stats(self):
         """Загрузка статистики из файла"""
         try:
             if os.path.exists(self.stats_file):
                 with open(self.stats_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Не удалось загрузить статистику: {e}")
+            print("📊 Будет создана новая статистика")
+        
+        # Стандартная статистика
         return {
             "total_games": 0,
             "wins": 0,
@@ -30,10 +59,16 @@ class NumberGuessingGame:
     def save_stats(self):
         """Сохранение статистики в файл"""
         try:
+            # Создаем директорию, если её нет
+            os.makedirs(os.path.dirname(self.stats_file), exist_ok=True)
+            
             with open(self.stats_file, 'w', encoding='utf-8') as f:
                 json.dump(self.stats, f, ensure_ascii=False, indent=2)
+            return True
         except Exception as e:
-            print(f"⚠️ Ошибка сохранения статистики: {e}")
+            print(f"⚠️ Не удалось сохранить статистику: {e}")
+            print("📊 Статистика будет сохранена только в памяти")
+            return False
     
     def save_game(self):
         """Сохранение текущей игры"""
@@ -48,11 +83,18 @@ class NumberGuessingGame:
                     "start_time": self.current_game["start_time"],
                     "hints_used": self.current_game["hints_used"]
                 }
+                
+                # Создаем директорию, если её нет
+                os.makedirs(os.path.dirname(self.save_file), exist_ok=True)
+                
                 with open(self.save_file, 'w', encoding='utf-8') as f:
                     json.dump(save_data, f, ensure_ascii=False, indent=2)
                 print("💾 Игра сохранена! Вы можете продолжить позже.")
+                return True
             except Exception as e:
-                print(f"⚠️ Ошибка сохранения игры: {e}")
+                print(f"⚠️ Не удалось сохранить игру: {e}")
+                return False
+        return False
     
     def load_game(self):
         """Загрузка сохраненной игры"""
@@ -77,9 +119,20 @@ class NumberGuessingGame:
                 print(f"📊 Попыток сделано: {len(self.current_game['attempts'])}")
                 print(f"🎯 Диапазон: {self.current_game['range_min']}-{self.current_game['range_max']}")
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Не удалось загрузить сохраненную игру: {e}")
         return False
+    
+    def safe_file_operation(self, operation, file_path):
+        """Безопасное выполнение файловых операций"""
+        try:
+            return operation(file_path)
+        except PermissionError:
+            print(f"❌ Нет прав доступа к файлу: {file_path}")
+            return False
+        except OSError as e:
+            print(f"❌ Ошибка файловой системы: {e}")
+            return False
     
     def display_instructions(self):
         """Отображение инструкций по игре"""
@@ -232,6 +285,9 @@ class NumberGuessingGame:
             for game in stats['games_history'][-5:]:  # Последние 5 игр
                 status = "🏆 Выиграл" if game['won'] else "💀 Проиграл"
                 print(f"   • {game['date']}: {status} за {game['attempts']} попыток")
+        
+        # Показываем где хранится статистика
+        print(f"\n💾 Файл статистики: {self.stats_file}")
         print("="*40)
     
     def update_stats(self, won, attempts_count, number_range):
@@ -264,7 +320,9 @@ class NumberGuessingGame:
         if len(self.stats['games_history']) > 20:
             self.stats['games_history'] = self.stats['games_history'][-20:]
         
-        self.save_stats()
+        # Пытаемся сохранить статистику, но не прерываем игру при ошибке
+        if not self.save_stats():
+            print("💡 Статистика будет сохранена только в памяти этой сессии")
     
     def play_game(self):
         """Основная игровая логика"""
@@ -341,8 +399,11 @@ class NumberGuessingGame:
                 restart = input("Начать новую игру? Текущий прогресс будет потерян. (y/n): ").lower()
                 if restart in ['y', 'yes', 'да']:
                     # Удаляем файл сохранения
-                    if os.path.exists(self.save_file):
-                        os.remove(self.save_file)
+                    try:
+                        if os.path.exists(self.save_file):
+                            os.remove(self.save_file)
+                    except:
+                        pass  # Игнорируем ошибки удаления
                     return self.play_game()
                 continue
             
@@ -385,8 +446,11 @@ class NumberGuessingGame:
         )
         
         # Удаление файла сохранения
-        if os.path.exists(self.save_file):
-            os.remove(self.save_file)
+        try:
+            if os.path.exists(self.save_file):
+                os.remove(self.save_file)
+        except:
+            pass  # Игнорируем ошибки удаления
     
     def main_menu(self):
         """Главное меню программы"""
@@ -403,8 +467,11 @@ class NumberGuessingGame:
             
             if choice == '1':
                 # Удаляем предыдущее сохранение
-                if os.path.exists(self.save_file):
-                    os.remove(self.save_file)
+                try:
+                    if os.path.exists(self.save_file):
+                        os.remove(self.save_file)
+                except:
+                    pass
                 self.play_game()
             elif choice == '2':
                 if not self.load_game():
